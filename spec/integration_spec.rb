@@ -65,5 +65,47 @@ describe Moped::Session do
       session[:people].find(name: "John").remove_all
       session[:people].find.count.should eq 0
     end
+
+    it "can retrieve multiple documents with fixed limit" do
+      session[:people].insert([{name: "John"}, {name: "Mary"}])
+      john, mary = session[:people].find.limit(-2).sort(name: 1).to_a
+      john["name"].should eq "John"
+      mary["name"].should eq "Mary"
+    end
+
+    it "can retrieve multiple documents with fixed limit" do
+      session[:people].insert([{name: "John"}, {name: "Mary"}])
+      john, mary = session[:people].find.limit(-2).sort(name: 1).to_a
+      john["name"].should eq "John"
+      mary["name"].should eq "Mary"
+    end
+
+    it "can retrieve no documents" do
+      session[:people].find.limit(-2).sort(name: 1).to_a.should eq []
+    end
+
+    it "can limit large result sets" do
+      documents = 100.times.map do
+        { _id: Moped::BSON::ObjectId.new, a: "A"*120000 }
+      end
+      session[:people].insert(documents)
+      session[:people].find.limit(20).to_a.length.should eq 20
+    end
+
+    it "can limit large result sets" do
+      documents = 100.times.map do
+        { _id: Moped::BSON::ObjectId.new, a: "A"*120000 }
+      end
+      session[:people].insert(documents)
+      session[:people].find.limit(75).to_a.length.should eq 75
+    end
+
+    it "can retrieve large result sets" do
+      documents = 100.times.map do
+        { _id: Moped::BSON::ObjectId.new, a: "A"*120000 }
+      end
+      session[:people].insert(documents)
+      session[:people].find.to_a.length.should eq 100
+    end
   end
 end
