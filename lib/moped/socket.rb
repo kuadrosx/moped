@@ -1,6 +1,92 @@
 module Moped
   class Socket
 
+    class Connection < EM::Connection
+      def self.connect(host, port)
+        f = Fiber.current
+        socket = EventMachine.connect(host, port, self)
+        EM.next_tick { f.resume }
+        Fiber.yield
+        socket
+      end
+
+      def post_init
+        @buffer = StringIO.new
+        @callbacks  = {}
+        @request_id = 0
+      end
+
+      def next_request_id
+        @request_id += 1
+      end
+
+      def send_command(op, callback = nil)
+        op.request_id = next_request_id
+
+        @callbacks[op.request_id] = callback if callback
+        send_data op.serialize
+      end
+
+      def receive_data(data)
+        if @buffer.length == 0
+          @buffer.string.replace(data)
+        else
+          @buffer.string << data
+        end
+
+        while reply = parse_reply(@buffer)
+          callback = @callbacks.delete(reply.response_to)
+          callback.call(reply) if callback
+        end
+
+        if @buffer.eof?
+          @buffer.string.clear
+          @buffer.rewind
+        end
+      end
+
+      def parse_reply(buffer)
+        remaining_bytes = buffer.length - buffer.pos
+
+        return nil unless remaining_bytes > 36
+        length, = buffer.read(4).unpack('l<')
+
+        unless remaining_bytes >= length - 4
+          buffer.pos -= 4
+          # buffer.seek(-4, IO::SEEK_CUR)
+          return nil
+        end
+
+        reply = Protocol::Reply.allocate
+
+        reply.length = length
+
+        reply.request_id,
+          reply.response_to,
+          reply.op_code,
+          reply.flags,
+          reply.cursor_id,
+          reply.offset,
+          reply.count = buffer.read(32).unpack('l4<q<l2<')
+
+        documents = reply.documents = []
+        count = reply.count
+        i = 0
+
+        while i < count
+          documents << BSON::Document.deserialize(buffer)
+          i += 1
+        end
+
+        reply
+      end
+
+      def closed?
+        false
+      end
+
+    end
+
     # Thread-safe atomic integer.
     class RequestId
       def initialize
@@ -29,30 +115,21 @@ module Moped
     def connect
       return true if @connected
 
-      @connection = TCPSocket.new host, port
+      @connection = Connection.connect host, port
       @connected = true
     end
 
     # Execute the operation on the connection. Pass a callback if you're
     # interested in the results.
     def execute(op)
-      buf = ""
-
-      op.request_id = @request_id.next
-      op.serialize buf
-
-      @mutex.lock
-      connection.write buf
-
       if Protocol::Query === op || Protocol::GetMore === op
-        length, = connection.read(4).unpack('l<')
-        data = connection.read(length - 4)
-        @mutex.unlock
-
-        parse_reply length, data
+        f = Fiber.current
+        connection.send_command op, ->(reply) {
+          f.resume reply
+        }
+        Fiber.yield
       else
-        @mutex.unlock
-
+        connection.send_command op
         true
       end
     end
