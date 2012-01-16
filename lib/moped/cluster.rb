@@ -75,7 +75,7 @@ module Moped
           socket = slaves.sample
         end
 
-        if socket.dead?
+        unless socket.alive?
           remove socket
           socket = nil
         end

@@ -164,7 +164,7 @@ describe Moped::Cluster do
     context "when socket is dead" do
       let(:dead_socket) do
         Moped::Socket.new("127.0.0.1", 27017).tap do |socket|
-          socket.stub(:dead? => true)
+          socket.stub(:alive? => false)
         end
       end
 

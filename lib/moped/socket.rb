@@ -29,8 +29,31 @@ module Moped
     def connect
       return true if @connected
 
-      @connection = TCPSocket.new host, port
+      @connection = TCPSocket.open host, port
       @connected = true
+    rescue Errno::ECONNREFUSED
+      false
+    end
+
+    # @return [true, false] whether this socket connection is alive
+    def alive?
+      if @connection
+        return false if @connection.closed?
+
+        readable, = IO.select([@connection], [@connection], [])
+
+        if readable[0]
+          begin
+            @connection.eof?
+          rescue Errno::ECONNRESET
+            false
+          end
+        else
+          true
+        end
+      else
+        false
+      end
     end
 
     # Execute the operation on the connection.
@@ -90,20 +113,11 @@ module Moped
       execute(query).documents.first
     end
 
-    # @return [Boolean] whether the socket is dead
-    def dead?
-      @mutex.synchronize do
-        @dead || @connection.closed?
-      end
-    end
-
     # Manually closes the connection
     def close
       @mutex.synchronize do
-        return if @dead
-
-        @dead = true
-        @connection.close unless @connection.closed?
+        @connection.close if @connection && !@connection.closed?
+        @connection = nil
       end
     end
 
