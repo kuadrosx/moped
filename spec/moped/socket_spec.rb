@@ -71,8 +71,8 @@ describe Moped::Socket do
 
     context "when connected but server goes away" do
       before do
-        server.close
-        socket.connection.stub(eof?: true)
+        remote = server.accept
+        remote.shutdown
       end
 
       it "should be false" do
