@@ -44,7 +44,7 @@ module Moped
 
         if readable[0]
           begin
-            @connection.eof?
+            !@connection.eof?
           rescue Errno::ECONNRESET
             false
           end

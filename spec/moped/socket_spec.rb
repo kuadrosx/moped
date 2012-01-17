@@ -72,6 +72,17 @@ describe Moped::Socket do
     context "when connected but server goes away" do
       before do
         server.close
+        socket.connection.stub(eof?: true)
+      end
+
+      it "should be false" do
+        socket.should_not be_alive
+      end
+    end
+
+    context "when connected but server goes away" do
+      before do
+        server.close
       end
 
       it "should be false" do
