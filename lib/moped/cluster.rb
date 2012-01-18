@@ -46,9 +46,15 @@ module Moped
     end
 
     def sync_socket(socket)
-      socket.connect
+      unless socket.connect
+        raise Errors::ConnectionFailure.new("Failed to connect to node #{socket.host}:#{socket.port}")
+      end
 
       is_master = socket.simple_query Protocol::Command.new(:$admin, ismaster: 1)
+
+      if is_master["info"]
+        raise Errors::ConnectionFailure.new("Failed to connect to node #{socket.host}:#{socket.port}: #{is_master["info"]}")
+      end
 
       if is_master["ismaster"]
         servers << socket

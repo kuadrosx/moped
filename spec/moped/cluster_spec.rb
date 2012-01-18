@@ -93,60 +93,130 @@ describe Moped::Cluster do
   end
 
   describe "#sync_socket" do
-    let(:cluster) { Moped::Cluster.new("127.0.0.1:27017") }
-    let(:socket) { Moped::Socket.new("127.0.0.1", 27017) }
+    let(:cluster) { Moped::Cluster.new "", false }
+    let(:socket) { Moped::Socket.new "", 99999 }
+    let(:connection) { Support::MockConnection.new }
 
     before do
-      socket.stub :connect
-      socket.stub :close
+      socket.stub(connection: connection, alive?: true)
     end
 
-    context "when socket is a master connection" do
+    context "when node is not running" do
+      it "raises a connection failure exception" do
+        socket.stub(connect: false)
+
+        lambda do
+          cluster.sync_socket socket
+        end.should raise_exception(Moped::Errors::ConnectionFailure)
+      end
+    end
+
+    context "when talking to a single node" do
       before do
-        socket.stub(simple_query: { "ismaster" => true })
+        connection.pending_replies << Hash[
+          "ismaster" => true,
+          "maxBsonObjectSize" => 16777216,
+          "ok" => 1.0
+        ]
       end
 
-      it "adds it to the list of servers" do
-        cluster.sync_socket socket
-        cluster.servers.should include socket
-      end
-
-      it "adds it to the list of masters" do
+      it "adds the node to the master set" do
         cluster.sync_socket socket
         cluster.masters.should include socket
       end
     end
 
-    context "when socket is a secondary connection" do
-      before do
-        socket.stub(simple_query: { "secondary" => true })
+    context "when talking to a replica set node" do
+
+      context "that is not configured" do
+        before do
+          connection.pending_replies << Hash[
+            "ismaster" => false,
+            "secondary" => false,
+            "info" => "can't get local.system.replset config from self or any seed (EMPTYCONFIG)",
+            "isreplicaset" => true,
+            "maxBsonObjectSize" => 16777216,
+            "ok" => 1.0
+          ]
+        end
+
+        it "raises a connection failure exception" do
+          lambda do
+            cluster.sync_socket socket
+          end.should raise_exception(Moped::Errors::ConnectionFailure)
+        end
       end
 
-      it "adds it to the list of servers" do
-        cluster.sync_socket socket
-        cluster.servers.should include socket
+      context "that is being initiated" do
+        before do
+          connection.pending_replies << Hash[
+            "ismaster" => false,
+            "secondary" => false,
+            "info" => "Received replSetInitiate - should come online shortly.",
+            "isreplicaset" => true,
+            "maxBsonObjectSize" => 16777216,
+            "ok" => 1.0
+          ]
+        end
+
+        it "raises a connection failure exception" do
+          lambda do
+            cluster.sync_socket socket
+          end.should raise_exception(Moped::Errors::ConnectionFailure)
+        end
       end
 
-      it "adds it to the list of slaves" do
-        cluster.sync_socket socket
-        cluster.slaves.should include socket
-      end
-    end
+      context "that is ready but not elected" do
+        before do
+          connection.pending_replies << Hash[
+            "setName" => "3fef4842b608",
+            "ismaster" => false,
+            "secondary" => false,
+            "hosts" => ["localhost:61085", "localhost:61086", "localhost:61084"],
+            "primary" => "localhost:61084",
+            "me" => "localhost:61085",
+            "maxBsonObjectSize" => 16777216,
+            "ok" => 1.0
+          ]
+        end
 
-    context "when socket is a passive connection" do
-      before do
-        socket.stub(simple_query: { "passive" => true })
+        it "raises no exception" do
+          lambda do
+            cluster.sync_socket socket
+          end.should_not raise_exception
+        end
+
+        it "does not add the connection to the available list" do
+          cluster.sync_socket socket
+          cluster.servers.should_not include socket
+        end
+
+        it "closes the socket" do
+          socket.should_receive(:close)
+          cluster.sync_socket socket
+        end
       end
 
-      it "does not add it to the list of servers" do
-        cluster.sync_socket socket
-        cluster.servers.should_not include socket
+      context "that is ready" do
+        before do
+          connection.pending_replies << Hash[
+            "setName" => "3ff029114780",
+            "ismaster" => true,
+            "secondary" => false,
+            "hosts" => ["localhost:59246", "localhost:59248", "localhost:59247"],
+            "primary" => "localhost:59246",
+            "me" => "localhost:59246",
+            "maxBsonObjectSize" => 16777216,
+            "ok" => 1.0
+          ]
+        end
+
+        it "adds the node to the master set" do
+          cluster.sync_socket socket
+          cluster.masters.should include socket
+        end
       end
 
-      it "closes the socket" do
-        socket.should_receive(:close)
-        cluster.sync_socket socket
-      end
     end
   end
 
