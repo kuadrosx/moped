@@ -3,7 +3,7 @@ module Moped
     def logger
       return @logger if defined?(@logger)
 
-      @logger = rails_logger || default_logger
+      @logger = rails_logger || nil #default_logger
     end
 
     def rails_logger

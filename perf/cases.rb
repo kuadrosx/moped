@@ -57,9 +57,11 @@ end
 profile "Insert and find one (1000x, 2 threads)" do
   2.times.map do
     Thread.new do
+      s = Moped::Session.new %w[ 127.0.0.1:27017 ], database: "moped_test"
+
       1000.times do
-        session[:people].insert(name: "John")
-        session[:people].find.one
+        s[:people].insert(name: "John")
+        s[:people].find.one
       end
     end
   end.each &:join
@@ -68,9 +70,11 @@ end
 profile "Insert and find one (1000x, 5 threads)" do
   5.times.map do |i|
     Thread.new do
+      s = Moped::Session.new %w[ 127.0.0.1:27017 ], database: "moped_test"
+
       1000.times do
-        session[:people].insert(name: "John")
-        session[:people].find.one
+        s[:people].insert(name: "John")
+        s[:people].find.one
       end
     end
   end.each &:join

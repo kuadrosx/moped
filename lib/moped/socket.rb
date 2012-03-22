@@ -6,19 +6,6 @@ module Moped
   #
   # The internal class wrapping a socket connection.
   class Socket
-
-    # Thread-safe atomic integer.
-    class RequestId
-      def initialize
-        @mutex = Mutex.new
-        @id = 0
-      end
-
-      def next
-        @mutex.synchronize { @id += 1 }
-      end
-    end
-
     attr_reader :connection
 
     attr_reader :host
@@ -27,9 +14,6 @@ module Moped
     def initialize(host, port)
       @host = host
       @port = port
-
-      @mutex = Mutex.new
-      @request_id = RequestId.new
     end
 
     # @return [true, false] whether the connection was successful
@@ -40,83 +24,31 @@ module Moped
     def connect
       return true if connection
 
-      Timeout::timeout 0.5 do
-        @connection = TCPSocket.new(host, port)
-      end
+      @connection = Connection.new
+      @connection.connect(host, port, 0.5)
     rescue Errno::ECONNREFUSED, Timeout::Error
       return false
     end
 
     # @return [true, false] whether this socket connection is alive
     def alive?
-      if connection
-        return false if connection.closed?
-
-        @mutex.synchronize do
-          if select([connection], nil, nil, 0)
-            !connection.eof? rescue false
-          else
-            true
-          end
-        end
-      else
-        false
-      end
+      @connection.alive?
     end
 
     # Execute the operations on the connection.
     def execute(*ops)
       instrument(ops) do
-        buf = ""
 
-        last = ops.each do |op|
-          op.request_id = @request_id.next
-          op.serialize buf
-        end.last
+        reply = nil
+        ops.each do |op|
+          connection.write op
 
-        if Protocol::Query === last || Protocol::GetMore === last
-          length = nil
-
-          @mutex.synchronize do
-            connection.write buf
-
-            length, = connection.read(4).unpack('l<')
-
-            # Re-use the already allocated buffer used for writing the command.
-            connection.read(length - 4, buf)
+          if Protocol::Query === op || Protocol::GetMore === op
+            reply = connection.read
           end
-
-          parse_reply length, buf
-        else
-          @mutex.synchronize do
-            connection.write buf
-          end
-
-          nil
         end
+        reply
       end
-    end
-
-    def parse_reply(length, data)
-      buffer = StringIO.new data
-
-      reply = Protocol::Reply.allocate
-
-      reply.length = length
-
-      reply.request_id,
-        reply.response_to,
-        reply.op_code,
-        reply.flags,
-        reply.cursor_id,
-        reply.offset,
-        reply.count = buffer.read(32).unpack('l4<q<l2<')
-
-      reply.documents = reply.count.times.map do
-        BSON::Document.deserialize(buffer)
-      end
-
-      reply
     end
 
     # Executes a simple (one result) query and returns the first document.
@@ -131,10 +63,8 @@ module Moped
 
     # Manually closes the connection
     def close
-      @mutex.synchronize do
-        connection.close if connection && !connection.closed?
-        @connection = nil
-      end
+      connection.disconnect if connection && connection.connected?
+      @connection = nil
     end
 
     def auth
